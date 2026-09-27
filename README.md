@@ -18,7 +18,8 @@ huf_rates.get_rate('EUR', date=datetime.date(2026, 9, 20))
 
 Rates are HUF per one unit of the currency. For a weekend or holiday you get
 the rate of the last banking day before it, up to 10 days back: a longer gap
-raises `RateUnavailableError`.
+raises `RateUnavailableError`. Each fetch is logged at INFO on the
+`huf_rates.api` logger, with the day MNB published the rates for.
 
 For a history, `get_rates_between` returns every day MNB published in a range
 (weekends and holidays are left out rather than filled in):

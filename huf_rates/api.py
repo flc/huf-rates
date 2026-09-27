@@ -1,4 +1,5 @@
 import datetime
+import logging
 from collections.abc import Iterable
 from decimal import Decimal
 from typing import Final
@@ -6,6 +7,8 @@ from zoneinfo import ZoneInfo
 
 from . import ecb, mnb
 from .exceptions import RateMismatchError, RateUnavailableError
+
+logger: Final[logging.Logger] = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT: Final[float] = 5
 # Backtested on USD, EUR and GBP from 2015 to September 2026, MNB's rates were
@@ -50,6 +53,8 @@ def get_rates(
     The rates are the ones of the last day MNB published on or before `date`,
     so weekends and holidays get the previous banking day.
 
+    Each fetch is logged at INFO, with the day MNB published the rates for.
+
     MNB serves them over http only. With `ecb_check` each rate is compared
     with the ECB's (crossed through EUR, fetched over https) of the same day,
     or of the ECB's last day before it if it hasn't published that day (yet:
@@ -87,6 +92,14 @@ def get_rates(
         day, rates = mnb.get_rates(foreign, date, timeout)
         if ecb_check:
             check_against_ecb({day: rates}, ecb_tolerance, timeout)
+
+        logger.info(
+            'MNB rates of %s for %s%s: %s',
+            day,
+            date,
+            ", checked against the ECB's" if ecb_check else '',
+            ', '.join(f'{c} {rate}' for c, rate in rates.items()),
+        )
 
     if 'HUF' in currencies:
         rates['HUF'] = Decimal(1)
