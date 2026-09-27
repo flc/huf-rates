@@ -1,0 +1,78 @@
+[project]
+name = "huf-rates"
+version = "0.1.0"
+description = "HUF exchange rates from the Hungarian National Bank (MNB), with an optional ECB cross-check and Django/DRF helpers."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Zoltan Szalai", email = "defaultdict@gmail.com" }]
+requires-python = ">=3.12"
+dependencies = ["requests>=2.32"]
+
+[project.urls]
+Repository = "https://github.com/flc/huf-rates"
+
+[project.optional-dependencies]
+django = ["django>=5.2", "djangorestframework>=3.16"]
+
+[dependency-groups]
+dev = [
+    # Django 5.2 is what the projects using this package run.
+    "django>=5.2,<6",
+    "django-stubs>=5.2,<6",
+    "djangorestframework>=3.16",
+    # 3.17+ requires django-stubs 6.
+    "djangorestframework-stubs>=3.16,<3.17",
+    "ipython",
+    "mypy",
+    "pytest",
+    "requests-mock",
+    "ruff",
+    "time-machine",
+    "types-requests",
+]
+
+[tool.uv]
+exclude-newer = "48 hours"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+ignore = [
+    "C408",
+    "C901",
+]
+select = [
+    "C",
+    "E",
+    "F",
+    "W",
+    "DJ",
+    # a requests call without a timeout: a stalled upstream would hold the worker indefinitely.
+    "S113",
+    # flags `# noqa` directives that no longer suppress anything, so stale
+    # suppressions get cleaned up instead of silently hiding future violations.
+    "RUF100",
+]
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.mypy]
+strict = true
+files = ["huf_rates", "tests"]
