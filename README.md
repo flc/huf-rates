@@ -88,6 +88,8 @@ are used (and logged as a warning), further off they count as a failed check
 reference, so a long outage can't move it step by step. Without a reference,
 or for a given day's rates (`get_exchange_rate_data_for_date`), the ECB
 outage fails the fetch as before.
+The reference lives in the cache like the rates, so flushing the cache drops
+it too; the first fetch that passes the ECB check after that sets it again.
 
 Optional settings:
 
