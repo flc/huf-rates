@@ -52,10 +52,11 @@ on USD, EUR and GBP from 2015 to September 2026, the two typically differ by
 0.15 to 0.3%, but on market shocks by much more: up to 2.44% on the same day
 and 3.86% against the ECB's previous day (USD, 10 March 2026). A 2% tolerance
 would have failed on about 4 days a year, so don't set it much below 5%. The
-check is off by default. If the ECB can't be reached while it is on, the call
-fails. So does the check for a currency the ECB doesn't publish (MNB publishes
-more, e.g. UAH): it raises `RateUnavailableError`, so leave the check off for
-those.
+check is off by default. If the check can't run while it is on (the ECB can't
+be reached, its answer can't be parsed, or it published no rates to compare
+with), the call raises `ECBUnavailableError`, whose `days` holds MNB's
+unchecked rates. That includes a currency the ECB doesn't publish (MNB
+publishes more, e.g. UAH), so leave the check off for those.
 
 ## Django
 
@@ -78,6 +79,15 @@ rates are served without fetching, so an outage doesn't hold up every call for
 the timeout.
 `refresh_exchange_rates`, meant for a periodic task, always fetches and raises
 when it can't, instead of falling back, so the task fails.
+
+With the ECB check on, rates that pass it are also kept as a reference
+(`currency:mnb-verified:<code>`). While the ECB can't be reached, today's MNB
+rates are compared with those instead, with the same tolerance: within it they
+are used (and logged as a warning), further off they count as a failed check
+(critical). Rates accepted that way are cached but don't become the
+reference, so a long outage can't move it step by step. Without a reference,
+or for a given day's rates (`get_exchange_rate_data_for_date`), the ECB
+outage fails the fetch as before.
 
 Optional settings:
 

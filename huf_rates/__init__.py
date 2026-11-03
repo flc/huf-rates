@@ -7,6 +7,7 @@ from .api import (
     get_rates_between,
 )
 from .exceptions import (
+    ECBUnavailableError,
     HufRatesError,
     ParseError,
     RateMismatchError,
@@ -17,6 +18,7 @@ from .exceptions import (
 __all__ = [
     'DEFAULT_ECB_TOLERANCE',
     'DEFAULT_TIMEOUT',
+    'ECBUnavailableError',
     'HufRatesError',
     'ParseError',
     'RateMismatchError',

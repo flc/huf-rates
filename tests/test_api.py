@@ -6,6 +6,7 @@ from requests_mock import Mocker
 
 from huf_rates import (
     DEFAULT_ECB_TOLERANCE,
+    ECBUnavailableError,
     ParseError,
     RateMismatchError,
     RateUnavailableError,
@@ -115,6 +116,22 @@ def test_ecb_check_uses_tolerance(requests_mock: Mocker) -> None:
     with pytest.raises(RateMismatchError):
         get_rates(['EUR'], date=date, ecb_check=True)
     assert get_rates(['EUR'], date=date, ecb_check=True, ecb_tolerance=0.07)
+
+
+def test_ecb_outage_raises_with_the_unchecked_rates(requests_mock: Mocker) -> None:
+    """
+    When the ECB can't be reached, the error carries MNB's unchecked rates.
+
+    Args:
+        requests_mock: Mocks MNB, and the ECB answering 500.
+    """
+    requests_mock.post(mnb.URL, text=mnb_response(MNB_DAYS))
+    requests_mock.get(ecb.URL.format(currencies='HUF'), status_code=500)
+
+    with pytest.raises(ECBUnavailableError) as raised:
+        get_rates(['EUR', 'HUF'], date=datetime.date(2026, 9, 21), ecb_check=True)
+
+    assert raised.value.days == {datetime.date(2026, 9, 21): {'EUR': Decimal('362.60000')}}
 
 
 def test_rates_between_has_each_published_day(requests_mock: Mocker) -> None:

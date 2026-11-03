@@ -26,6 +26,7 @@ from django.core.cache import cache
 from huf_rates import (
     DEFAULT_ECB_TOLERANCE,
     DEFAULT_TIMEOUT,
+    ECBUnavailableError,
     HufRatesError,
     RateMismatchError,
     RateUnavailableError,
@@ -41,6 +42,12 @@ CACHE_KEY: Final[str] = 'currency:mnb:{}'
 # Cache key of when a currency's rate was fetched (a Unix timestamp), by its
 # lower-cased code.
 FETCHED_CACHE_KEY: Final[str] = 'currency:mnb-fetched:{}'
+# Cache key of a currency's last rate that passed the ECB check, with when it
+# was fetched (a `(rate, Unix timestamp)` pair), by its lower-cased code. While
+# the ECB can't be reached, MNB's rates are checked against these instead.
+# Rates accepted that way don't replace them, so a long outage can't move the
+# reference step by step.
+VERIFIED_CACHE_KEY: Final[str] = 'currency:mnb-verified:{}'
 
 # Cache key set for `RETRY_DELAY` seconds after a fetch fails, so the calls
 # in the meantime use the cached rates rather than each waiting for the
@@ -59,42 +66,121 @@ ExchangeRateData = dict[tuple[str, str], float]
 def _fetch_rates(
     currencies: Iterable[str],
     date: datetime.date | None = None,
-) -> dict[str, float]:
+) -> tuple[dict[str, float], bool]:
     """
     Fetch MNB's rates with the options set in the settings.
+
+    With the ECB check on, today's rates are checked against the last ones
+    that passed it (see `VERIFIED_CACHE_KEY`) when the ECB can't be reached,
+    with the same tolerance, and logged as a warning when they pass. A day's
+    rates (`date` given) aren't: a past day's rates can't be held against
+    today's.
 
     Args:
         currencies: Currency codes, in any case. HUF may be among them.
         date: The day to get the rates of. Defaults to today.
 
     Returns:
-        HUF per one unit of each currency, keyed by the upper-cased code.
+        HUF per one unit of each currency, keyed by the upper-cased code, and
+        whether the ECB check passed on them.
 
     Raises:
-        See `huf_rates.get_rates`.
+        RateMismatchError: MNB's rates are further from the ECB's, or, while
+            the ECB can't be reached, from the last ones that passed the ECB
+            check, than the tolerance allows.
+        ECBUnavailableError: The ECB couldn't be reached, and there's no rate
+            that passed the ECB check to compare with (or `date` was given).
+        See `huf_rates.get_rates` for the rest.
     """
-    rates = get_rates(
-        currencies,
-        date=date,
-        ecb_check=getattr(settings, 'HUF_RATES_ECB_CHECK', False),
-        ecb_tolerance=getattr(settings, 'HUF_RATES_ECB_TOLERANCE', DEFAULT_ECB_TOLERANCE),
-        timeout=getattr(settings, 'HUF_RATES_TIMEOUT', DEFAULT_TIMEOUT),
+    ecb_check = getattr(settings, 'HUF_RATES_ECB_CHECK', False)
+    tolerance = getattr(settings, 'HUF_RATES_ECB_TOLERANCE', DEFAULT_ECB_TOLERANCE)
+    currencies = [c.upper() for c in currencies]
+    try:
+        rates = get_rates(
+            currencies,
+            date=date,
+            ecb_check=ecb_check,
+            ecb_tolerance=tolerance,
+            timeout=getattr(settings, 'HUF_RATES_TIMEOUT', DEFAULT_TIMEOUT),
+        )
+    except ECBUnavailableError as e:
+        if date is not None:
+            raise
+
+        ((day, unchecked),) = e.days.items()
+        _check_against_verified(day, unchecked, Decimal(str(tolerance)), e)
+        rates = {**unchecked, **({'HUF': Decimal(1)} if 'HUF' in currencies else {})}
+        return {c: float(rate) for c, rate in rates.items()}, False
+
+    return {c: float(rate) for c, rate in rates.items()}, ecb_check
+
+
+def _check_against_verified(
+    day: datetime.date,
+    rates: dict[str, Decimal],
+    tolerance: Decimal,
+    unavailable: ECBUnavailableError,
+) -> None:
+    """
+    Check MNB's rates against the last ones that passed the ECB check.
+
+    Args:
+        day: The day MNB published the rates for.
+        rates: MNB's rates of foreign currencies.
+        tolerance: The largest difference allowed, as a fraction of MNB's
+            rate.
+        unavailable: The error the ECB check raised.
+
+    Raises:
+        RateMismatchError: A rate differs by more than `tolerance`.
+        ECBUnavailableError: `unavailable`, if a currency has no rate that
+            passed the ECB check.
+    """
+    keys = {c: VERIFIED_CACHE_KEY.format(c.lower()) for c in rates}
+    verified = cache.get_many(keys.values())
+    if any(k not in verified for k in keys.values()):
+        raise unavailable
+
+    for currency, rate in rates.items():
+        reference, _ = verified[keys[currency]]
+        deviation = abs(Decimal(str(reference)) / rate - 1)
+        if deviation > tolerance:
+            raise RateMismatchError(
+                f"{currency}: MNB's rate of {day} is {rate} HUF, the last one that passed the "
+                f'ECB check is {reference} HUF ({deviation:.2%} apart, tolerance {tolerance:.2%}), '
+                "and the ECB couldn't be reached"
+            ) from unavailable
+
+    oldest = min(at for _, at in verified.values())
+    logger.warning(
+        "The ECB couldn't be reached, so MNB's rates of %s were checked against the last ones "
+        'that passed the ECB check (the oldest fetched %.0fs ago): %s',
+        day,
+        time.time() - oldest,
+        ', '.join(f'{c} {rate}' for c, rate in rates.items()),
+        exc_info=unavailable,
     )
-    return {c: float(rate) for c, rate in rates.items()}
 
 
-def _cache_rates(rates: dict[str, float]) -> None:
+def _cache_rates(rates: dict[str, float], verified: bool) -> None:
     """
     Cache rates without expiry, with the time they were fetched.
 
     Args:
         rates: HUF per one unit of each currency, keyed by the currency code.
+        verified: Whether the ECB check passed on them: those are also kept
+            as the reference for when the ECB can't be reached.
     """
     now = time.time()
     cache.set_many(
         {
             **{CACHE_KEY.format(c.lower()): rate for c, rate in rates.items()},
             **{FETCHED_CACHE_KEY.format(c.lower()): now for c in rates},
+            **(
+                {VERIFIED_CACHE_KEY.format(c.lower()): (rate, now) for c, rate in rates.items()}
+                if verified
+                else {}
+            ),
         },
         timeout=None,
     )
@@ -175,7 +261,7 @@ def get_rates_safe(
     # Only failures of the sources fall back to the cache: a bug or a bad
     # setting must not hide behind the cached rates.
     try:
-        rates = _fetch_rates(keys)
+        rates, verified = _fetch_rates(keys)
     except (HufRatesError, requests.RequestException) as e:
         cache.set(failed_key, True, timeout=RETRY_DELAY)
         fallback = f'and no cached rate for {missing}' if missing else 'using the cached ones'
@@ -198,7 +284,7 @@ def get_rates_safe(
 
         return cached
 
-    _cache_rates(rates)
+    _cache_rates(rates, verified)
     return rates
 
 
@@ -254,8 +340,8 @@ def refresh_exchange_rates() -> ExchangeRateData:
     Raises:
         See `huf_rates.get_rates`.
     """
-    rates = _fetch_rates(settings.CURRENCIES)
-    _cache_rates(rates)
+    rates, verified = _fetch_rates(settings.CURRENCIES)
+    _cache_rates(rates, verified)
     return _pairs(rates)
 
 
@@ -275,7 +361,7 @@ def get_exchange_rate_data_for_date(date: datetime.date) -> ExchangeRateData:
     Raises:
         See `huf_rates.get_rates`.
     """
-    return _pairs(_fetch_rates(settings.CURRENCIES, date))
+    return _pairs(_fetch_rates(settings.CURRENCIES, date)[0])
 
 
 def get_exchange_rate(

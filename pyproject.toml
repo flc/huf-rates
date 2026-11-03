@@ -1,6 +1,6 @@
 [project]
 name = "huf-rates"
-version = "0.1.0"
+version = "0.2.0"
 description = "HUF exchange rates from the Hungarian National Bank (MNB), with an optional ECB cross-check and Django/DRF helpers."
 readme = "README.md"
 license = "MIT"

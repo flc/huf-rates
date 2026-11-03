@@ -10,7 +10,7 @@ from requests_mock import Mocker
 from rest_framework.test import APIRequestFactory
 from time_machine import TimeMachineFixture
 
-from huf_rates import api, ecb, mnb
+from huf_rates import ECBUnavailableError, api, ecb, mnb
 from huf_rates.contrib.django.exchange import (
     DEFAULT_CACHE_MAX_AGE,
     RETRY_DELAY,
@@ -261,6 +261,89 @@ def test_failed_ecb_check_is_logged_as_critical(
         assert get_exchange_rate_data(cache_first=False) == cached
 
     assert [r.levelno for r in caplog.records] == [logging.CRITICAL]
+
+
+def _mock_checked_then_ecb_down(requests_mock: Mocker, usd_after: str) -> None:
+    """
+    Refresh once with the ECB check passing, then take the ECB down.
+
+    Args:
+        requests_mock: Mocks MNB and the ECB.
+        usd_after: MNB's USD rate (decimal comma) once the ECB is down.
+    """
+    requests_mock.post(
+        mnb.URL,
+        text=mnb_response({'2026-09-21': [('USD', 1, '315,85000'), ('EUR', 1, '362,60000')]}),
+    )
+    requests_mock.get(
+        ecb.URL.format(currencies='HUF+USD'),
+        text=ecb_response({'2026-09-21': {'HUF': '362.60', 'USD': '1.1480'}}),
+    )
+    refresh_exchange_rates()
+
+    requests_mock.post(
+        mnb.URL,
+        text=mnb_response({'2026-09-21': [('USD', 1, usd_after), ('EUR', 1, '362,60000')]}),
+    )
+    requests_mock.get(ecb.URL.format(currencies='HUF+USD'), exc=requests.ConnectTimeout)
+
+
+@override_settings(HUF_RATES_ECB_CHECK=True)
+def test_ecb_outage_checks_against_the_last_checked_rates(
+    requests_mock: Mocker, caplog: pytest.LogCaptureFixture
+) -> None:
+    """
+    While the ECB is down, MNB's rates close to the last checked ones are used.
+
+    Args:
+        requests_mock: Mocks MNB, and the ECB passing the check, then down.
+        caplog: Captures the log records.
+    """
+    _mock_checked_then_ecb_down(requests_mock, '318,00000')
+
+    assert refresh_exchange_rates()[('USD', 'HUF')] == 318.0
+    assert [r.levelno for r in caplog.records if r.name.startswith('huf_rates.contrib')] == [
+        logging.WARNING
+    ]
+
+
+@override_settings(HUF_RATES_ECB_CHECK=True)
+def test_ecb_outage_refuses_rates_far_from_the_last_checked_ones(
+    requests_mock: Mocker, caplog: pytest.LogCaptureFixture
+) -> None:
+    """
+    While the ECB is down, rates beyond the tolerance are refused as suspicious.
+
+    Args:
+        requests_mock: Mocks MNB, and the ECB passing the check, then down.
+        caplog: Captures the log records.
+    """
+    _mock_checked_then_ecb_down(requests_mock, '340,00000')
+
+    assert get_exchange_rate_data(cache_first=False)[('USD', 'HUF')] == 315.85
+    assert [r.levelno for r in caplog.records if r.name.startswith('huf_rates.contrib')] == [
+        logging.CRITICAL
+    ]
+
+
+@override_settings(HUF_RATES_ECB_CHECK=True)
+def test_ecb_outage_without_checked_rates_fails(requests_mock: Mocker) -> None:
+    """
+    While the ECB is down, rates never checked can't stand in as the reference.
+
+    Args:
+        requests_mock: Mocks MNB, and the ECB down.
+    """
+    requests_mock.post(
+        mnb.URL,
+        text=mnb_response({'2026-09-21': [('USD', 1, '315,85000'), ('EUR', 1, '362,60000')]}),
+    )
+    requests_mock.get(ecb.URL.format(currencies='HUF+USD'), exc=requests.ConnectTimeout)
+    with override_settings(HUF_RATES_ECB_CHECK=False):
+        refresh_exchange_rates()
+
+    with pytest.raises(ECBUnavailableError):
+        refresh_exchange_rates()
 
 
 def test_response_with_days_outside_the_range_is_logged_as_critical(

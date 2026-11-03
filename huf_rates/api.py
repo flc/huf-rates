@@ -5,8 +5,10 @@ from decimal import Decimal
 from typing import Final
 from zoneinfo import ZoneInfo
 
+import requests
+
 from . import ecb, mnb
-from .exceptions import RateMismatchError, RateUnavailableError
+from .exceptions import ECBUnavailableError, ParseError, RateMismatchError, RateUnavailableError
 
 logger: Final[logging.Logger] = logging.getLogger(__name__)
 
@@ -76,12 +78,13 @@ def get_rates(
         code. HUF itself is 1.
 
     Raises:
-        RateUnavailableError: A rate wasn't published (by MNB, or by the ECB
-            during the check).
+        RateUnavailableError: MNB didn't publish a rate.
         RateMismatchError: The ECB check failed.
-        ParseError: A response couldn't be parsed or didn't match the
+        ECBUnavailableError: The ECB check couldn't run, see
+            `ECBUnavailableError`. It carries MNB's unchecked rates.
+        ParseError: MNB's response couldn't be parsed or didn't match the
             request.
-        requests.RequestException: A request failed.
+        requests.RequestException: The request to MNB failed.
     """
     date = datetime.datetime.now(TIMEZONE).date() if date is None else _as_date(date)
 
@@ -91,7 +94,7 @@ def get_rates(
     if foreign:
         day, rates = mnb.get_rates(foreign, date, timeout)
         if ecb_check:
-            check_against_ecb({day: rates}, ecb_tolerance, timeout)
+            _check_against_ecb_or_raise({day: rates}, ecb_tolerance, timeout)
 
         logger.info(
             'MNB rates of %s for %s%s: %s',
@@ -173,12 +176,11 @@ def get_rates_between(
 
     Raises:
         ValueError: `start` is after `end`.
-        RateUnavailableError: The ECB published no rates to check a day
-            against.
         RateMismatchError: The ECB check failed.
-        ParseError: A response couldn't be parsed or didn't match the
+        ECBUnavailableError: The ECB check couldn't run, see `get_rates`.
+        ParseError: MNB's response couldn't be parsed or didn't match the
             request.
-        requests.RequestException: A request failed.
+        requests.RequestException: The request to MNB failed.
     """
     start, end = _as_date(start), _as_date(end)
     if start > end:
@@ -191,13 +193,37 @@ def get_rates_between(
 
     days = mnb.get_rates_between(foreign, start, end, timeout)
     if ecb_check and days:
-        check_against_ecb(days, ecb_tolerance, timeout)
+        _check_against_ecb_or_raise(days, ecb_tolerance, timeout)
 
     if 'HUF' in currencies:
         for rates in days.values():
             rates['HUF'] = Decimal(1)
 
     return days
+
+
+def _check_against_ecb_or_raise(
+    days: dict[datetime.date, dict[str, Decimal]],
+    tolerance: Decimal | float,
+    timeout: float,
+) -> None:
+    """
+    Run `check_against_ecb`, raising `ECBUnavailableError` if it can't run.
+
+    Args:
+        days: See `check_against_ecb`.
+        tolerance: See `check_against_ecb`.
+        timeout: See `check_against_ecb`.
+
+    Raises:
+        RateMismatchError: A rate differs by more than `tolerance`.
+        ECBUnavailableError: The ECB couldn't be reached, its response
+            couldn't be parsed, or it published no rates to compare with.
+    """
+    try:
+        check_against_ecb(days, tolerance, timeout)
+    except (requests.RequestException, ParseError, RateUnavailableError) as e:
+        raise ECBUnavailableError(f"The ECB check couldn't run: {e}", days) from e
 
 
 def check_against_ecb(
