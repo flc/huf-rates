@@ -13,6 +13,9 @@ from .exceptions import ECBUnavailableError, ParseError, RateMismatchError, Rate
 logger: Final[logging.Logger] = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT: Final[float] = 5
+# The ECB's data API builds a CSV for each request and answers more slowly
+# than MNB, especially under load.
+DEFAULT_ECB_TIMEOUT: Final[float] = 20
 # Backtested on USD, EUR and GBP from 2015 to September 2026, MNB's rates were
 # at most 2.44% from the ECB's of the same day, and 3.86% from the ECB's of
 # the previous day, which is what they're compared with between MNB's fixing
@@ -48,6 +51,7 @@ def get_rates(
     ecb_check: bool = False,
     ecb_tolerance: Decimal | float = DEFAULT_ECB_TOLERANCE,
     timeout: float = DEFAULT_TIMEOUT,
+    ecb_timeout: float = DEFAULT_ECB_TIMEOUT,
 ) -> dict[str, Decimal]:
     """
     Return MNB's HUF exchange rates.
@@ -71,7 +75,8 @@ def get_rates(
         ecb_check: Whether to check the rates against the ECB's.
         ecb_tolerance: The largest difference the ECB check allows, as a
             fraction of MNB's rate (0.02 is 2%).
-        timeout: Timeout of each request, in seconds.
+        timeout: Timeout of the request to MNB, in seconds.
+        ecb_timeout: Timeout of the request to the ECB, in seconds.
 
     Returns:
         HUF per one unit of each currency, keyed by the upper-cased currency
@@ -94,7 +99,7 @@ def get_rates(
     if foreign:
         day, rates = mnb.get_rates(foreign, date, timeout)
         if ecb_check:
-            _check_against_ecb_or_raise({day: rates}, ecb_tolerance, timeout)
+            _check_against_ecb_or_raise({day: rates}, ecb_tolerance, ecb_timeout)
 
         logger.info(
             'MNB rates of %s for %s%s: %s',
@@ -116,6 +121,7 @@ def get_rate(
     ecb_check: bool = False,
     ecb_tolerance: Decimal | float = DEFAULT_ECB_TOLERANCE,
     timeout: float = DEFAULT_TIMEOUT,
+    ecb_timeout: float = DEFAULT_ECB_TIMEOUT,
 ) -> Decimal:
     """
     Return MNB's HUF exchange rate of one currency.
@@ -126,6 +132,7 @@ def get_rate(
         ecb_check: See `get_rates`.
         ecb_tolerance: See `get_rates`.
         timeout: See `get_rates`.
+        ecb_timeout: See `get_rates`.
 
     Returns:
         HUF per one unit of the currency.
@@ -139,6 +146,7 @@ def get_rate(
         ecb_check=ecb_check,
         ecb_tolerance=ecb_tolerance,
         timeout=timeout,
+        ecb_timeout=ecb_timeout,
     )
     return rates[currency.upper()]
 
@@ -150,6 +158,7 @@ def get_rates_between(
     ecb_check: bool = False,
     ecb_tolerance: Decimal | float = DEFAULT_ECB_TOLERANCE,
     timeout: float = DEFAULT_TIMEOUT,
+    ecb_timeout: float = DEFAULT_ECB_TIMEOUT,
 ) -> dict[datetime.date, dict[str, Decimal]]:
     """
     Return MNB's HUF exchange rates of every day it published in a range.
@@ -167,6 +176,7 @@ def get_rates_between(
             `get_rates`.
         ecb_tolerance: See `get_rates`.
         timeout: See `get_rates`.
+        ecb_timeout: See `get_rates`.
 
     Returns:
         HUF per one unit of each currency, keyed by the upper-cased currency
@@ -193,7 +203,7 @@ def get_rates_between(
 
     days = mnb.get_rates_between(foreign, start, end, timeout)
     if ecb_check and days:
-        _check_against_ecb_or_raise(days, ecb_tolerance, timeout)
+        _check_against_ecb_or_raise(days, ecb_tolerance, ecb_timeout)
 
     if 'HUF' in currencies:
         for rates in days.values():
@@ -229,7 +239,7 @@ def _check_against_ecb_or_raise(
 def check_against_ecb(
     days: dict[datetime.date, dict[str, Decimal]],
     tolerance: Decimal | float,
-    timeout: float = DEFAULT_TIMEOUT,
+    timeout: float = DEFAULT_ECB_TIMEOUT,
 ) -> None:
     """
     Check MNB's rates against the ECB's.

@@ -6,7 +6,9 @@ Settings (all optional):
 
 - `HUF_RATES_ECB_CHECK`: check MNB's rates against the ECB's (default False)
 - `HUF_RATES_ECB_TOLERANCE`: allowed difference as a fraction (default 0.05)
-- `HUF_RATES_TIMEOUT`: request timeout in seconds (default 5)
+- `HUF_RATES_TIMEOUT`: timeout of the request to MNB in seconds (default 5)
+- `HUF_RATES_ECB_TIMEOUT`: timeout of the request to the ECB in seconds
+  (default 20)
 - `HUF_RATES_CACHE_MAX_AGE`: seconds cached rates count as fresh for (default
   a day)
 """
@@ -24,6 +26,7 @@ from django.conf import settings
 from django.core.cache import cache
 
 from huf_rates import (
+    DEFAULT_ECB_TIMEOUT,
     DEFAULT_ECB_TOLERANCE,
     DEFAULT_TIMEOUT,
     ECBUnavailableError,
@@ -102,6 +105,7 @@ def _fetch_rates(
             ecb_check=ecb_check,
             ecb_tolerance=tolerance,
             timeout=getattr(settings, 'HUF_RATES_TIMEOUT', DEFAULT_TIMEOUT),
+            ecb_timeout=getattr(settings, 'HUF_RATES_ECB_TIMEOUT', DEFAULT_ECB_TIMEOUT),
         )
     except ECBUnavailableError as e:
         if date is not None:

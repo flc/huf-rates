@@ -1,4 +1,5 @@
 from .api import (
+    DEFAULT_ECB_TIMEOUT,
     DEFAULT_ECB_TOLERANCE,
     DEFAULT_TIMEOUT,
     check_against_ecb,
@@ -16,6 +17,7 @@ from .exceptions import (
 )
 
 __all__ = [
+    'DEFAULT_ECB_TIMEOUT',
     'DEFAULT_ECB_TOLERANCE',
     'DEFAULT_TIMEOUT',
     'ECBUnavailableError',

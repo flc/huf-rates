@@ -5,7 +5,9 @@ import pytest
 from requests_mock import Mocker
 
 from huf_rates import (
+    DEFAULT_ECB_TIMEOUT,
     DEFAULT_ECB_TOLERANCE,
+    DEFAULT_TIMEOUT,
     ECBUnavailableError,
     ParseError,
     RateMismatchError,
@@ -116,6 +118,27 @@ def test_ecb_check_uses_tolerance(requests_mock: Mocker) -> None:
     with pytest.raises(RateMismatchError):
         get_rates(['EUR'], date=date, ecb_check=True)
     assert get_rates(['EUR'], date=date, ecb_check=True, ecb_tolerance=0.07)
+
+
+def test_the_ecb_request_has_its_own_timeout(requests_mock: Mocker) -> None:
+    """
+    MNB's request waits `timeout`, the ECB's `ecb_timeout`.
+
+    Args:
+        requests_mock: Mocks MNB and the ECB, recording the requests.
+    """
+    requests_mock.post(mnb.URL, text=mnb_response(MNB_DAYS))
+    requests_mock.get(
+        ecb.URL.format(currencies='HUF'),
+        text=ecb_response({'2026-09-21': {'HUF': '362.60'}}),
+    )
+
+    get_rates(['EUR'], date=datetime.date(2026, 9, 21), ecb_check=True)
+
+    assert [r.timeout for r in requests_mock.request_history] == [
+        DEFAULT_TIMEOUT,
+        DEFAULT_ECB_TIMEOUT,
+    ]
 
 
 def test_ecb_outage_raises_with_the_unchecked_rates(requests_mock: Mocker) -> None:

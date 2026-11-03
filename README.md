@@ -40,6 +40,9 @@ https, crosses them through EUR and compares:
 huf_rates.get_rates(['USD', 'EUR'], ecb_check=True, ecb_tolerance=0.05)
 ```
 
+The ECB's data API answers more slowly than MNB, so its request has its own
+timeout, `ecb_timeout` (20 seconds by default; `timeout`, for MNB, is 5).
+
 `get_rates_between` takes the same two arguments and checks every day, each
 against the ECB's rates of that day (or its last day before, if the ECB didn't
 publish it), with a single request to the ECB.
@@ -97,7 +100,8 @@ Optional settings:
 | --- | --- | --- |
 | `HUF_RATES_ECB_CHECK` | `False` | run the ECB check |
 | `HUF_RATES_ECB_TOLERANCE` | `0.05` | allowed difference, as a fraction |
-| `HUF_RATES_TIMEOUT` | `5` | request timeout in seconds |
+| `HUF_RATES_TIMEOUT` | `5` | timeout of the request to MNB, in seconds |
+| `HUF_RATES_ECB_TIMEOUT` | `20` | timeout of the request to the ECB, in seconds |
 | `HUF_RATES_CACHE_MAX_AGE` | `86400` | seconds cached rates count as fresh for |
 
 `huf_rates.contrib.django.urls` serves the DRF currency converter view.
